@@ -49,7 +49,29 @@ app.post('/offline', (req, res) => {
   res.json({ ok: true });
 });
 
-// ── ADMIN: sincronizar trabajos al servidor ───────────────────────
+let employeeCredentials = {}; // { empId: { name, password, adminId } }
+
+// ── ADMIN: sync employee credentials ─────────────────────────────
+app.post('/sync-employees', (req, res) => {
+  const { employees } = req.body;
+  if (!Array.isArray(employees)) return res.status(400).json({ error: 'employees debe ser array' });
+  employeeCredentials = {};
+  employees.forEach(e => {
+    if (e.empId) employeeCredentials[e.empId] = { name: e.name, password: e.password || '', adminId: e.id };
+  });
+  console.log(`👥 Sincronizados ${employees.length} empleados`);
+  res.json({ ok: true });
+});
+
+// ── EMPLEADO: validar login con contraseña ────────────────────────
+app.post('/login', (req, res) => {
+  const { empId, password } = req.body;
+  const cred = employeeCredentials[empId];
+  if (!cred) return res.status(401).json({ error: 'ID de empleado no encontrado' });
+  if (cred.password && cred.password !== password)
+    return res.status(401).json({ error: 'Contraseña incorrecta' });
+  res.json({ ok: true, name: cred.name, adminId: cred.adminId });
+});
 app.post('/sync-jobs', (req, res) => {
   const { jobsData } = req.body;
   if (!Array.isArray(jobsData))
@@ -63,9 +85,10 @@ app.post('/sync-jobs', (req, res) => {
 app.get('/my-jobs/:employeeId', (req, res) => {
   const { employeeId } = req.params;
   const today = new Date().toISOString().split('T')[0];
+  const monthPrefix = today.slice(0, 7); // "2026-03"
 
   const myJobs = jobs
-    .filter(j => String(j.employeeId) === String(employeeId) && j.date === today)
+    .filter(j => String(j.employeeId) === String(employeeId) && j.date && j.date.startsWith(monthPrefix))
     .map(job => {
       // Aplicar actualizaciones de tareas del empleado
       const updates = taskUpdates[job.id] || {};
