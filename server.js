@@ -5,31 +5,26 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Almacenamiento en memoria (simple, sin base de datos)
-const locations = {}; // { employeeId: { lat, lng, name, timestamp, jobId, status } }
-const history = {};   // { employeeId: [{lat, lng, timestamp}] }
+// ── ALMACENAMIENTO EN MEMORIA ─────────────────────────────────────
+const locations = {};  // { employeeId: { lat, lng, name, timestamp, jobId, status } }
+const history = {};    // { employeeId: [{lat, lng, timestamp}] }
+let jobs = [];         // Lista de trabajos sincronizada desde el admin
+let taskUpdates = {};  // { jobId: { taskId: done } } — actualizaciones de empleados
 
-// ── EMPLEADO: enviar ubicación desde celular ──────────────────────
+// ── EMPLEADO: enviar ubicación ────────────────────────────────────
 app.post('/location', (req, res) => {
   const { employeeId, name, lat, lng, jobId, status } = req.body;
-
-  if (!employeeId || !lat || !lng) {
+  if (!employeeId || !lat || !lng)
     return res.status(400).json({ error: 'Faltan datos: employeeId, lat, lng' });
-  }
 
   const entry = {
-    employeeId,
-    name: name || 'Empleado',
-    lat: parseFloat(lat),
-    lng: parseFloat(lng),
-    jobId: jobId || null,
-    status: status || 'active',
+    employeeId, name: name || 'Empleado',
+    lat: parseFloat(lat), lng: parseFloat(lng),
+    jobId: jobId || null, status: status || 'active',
     timestamp: new Date().toISOString()
   };
-
   locations[employeeId] = entry;
 
-  // Guardar historial (máximo 100 puntos por empleado)
   if (!history[employeeId]) history[employeeId] = [];
   history[employeeId].push({ lat: entry.lat, lng: entry.lng, timestamp: entry.timestamp });
   if (history[employeeId].length > 100) history[employeeId].shift();
@@ -38,17 +33,13 @@ app.post('/location', (req, res) => {
 });
 
 // ── DASHBOARD: obtener todas las ubicaciones ──────────────────────
-app.get('/locations', (req, res) => {
-  res.json(Object.values(locations));
-});
+app.get('/locations', (req, res) => res.json(Object.values(locations)));
 
 // ── DASHBOARD: historial de un empleado ──────────────────────────
-app.get('/history/:employeeId', (req, res) => {
-  const { employeeId } = req.params;
-  res.json(history[employeeId] || []);
-});
+app.get('/history/:employeeId', (req, res) =>
+  res.json(history[req.params.employeeId] || []));
 
-// ── EMPLEADO: marcar que salió (offline) ─────────────────────────
+// ── EMPLEADO: marcar offline ──────────────────────────────────────
 app.post('/offline', (req, res) => {
   const { employeeId } = req.body;
   if (locations[employeeId]) {
@@ -58,16 +49,70 @@ app.post('/offline', (req, res) => {
   res.json({ ok: true });
 });
 
-// ── HEALTH CHECK (Render lo necesita) ────────────────────────────
-app.get('/', (req, res) => {
-  res.json({
-    status: 'GPS Server corriendo ✅',
-    empleados_activos: Object.values(locations).filter(l => l.status === 'active').length,
-    total_empleados: Object.keys(locations).length
-  });
+// ── ADMIN: sincronizar trabajos al servidor ───────────────────────
+app.post('/sync-jobs', (req, res) => {
+  const { jobsData } = req.body;
+  if (!Array.isArray(jobsData))
+    return res.status(400).json({ error: 'jobsData debe ser un array' });
+  jobs = jobsData;
+  console.log(`📋 Sincronizados ${jobs.length} trabajos`);
+  res.json({ ok: true, total: jobs.length });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 GPS Server corriendo en puerto ${PORT}`);
+// ── EMPLEADO: obtener sus trabajos del día ────────────────────────
+app.get('/my-jobs/:employeeId', (req, res) => {
+  const { employeeId } = req.params;
+  const today = new Date().toISOString().split('T')[0];
+
+  const myJobs = jobs
+    .filter(j => String(j.employeeId) === String(employeeId) && j.date === today)
+    .map(job => {
+      // Aplicar actualizaciones de tareas del empleado
+      const updates = taskUpdates[job.id] || {};
+      const tasks = (job.tasks || []).map(task => ({
+        ...task,
+        done: updates[task.id] !== undefined ? updates[task.id] : task.done
+      }));
+      return { ...job, tasks };
+    });
+
+  res.json(myJobs);
 });
+
+// ── EMPLEADO: marcar/desmarcar una tarea ─────────────────────────
+app.post('/update-task', (req, res) => {
+  const { jobId, taskId, done, employeeId } = req.body;
+  if (!jobId || !taskId)
+    return res.status(400).json({ error: 'Faltan jobId y taskId' });
+
+  if (!taskUpdates[jobId]) taskUpdates[jobId] = {};
+  taskUpdates[jobId][taskId] = done;
+
+  console.log(`✅ Empleado ${employeeId} marcó tarea ${taskId} del trabajo ${jobId}: ${done}`);
+  res.json({ ok: true });
+});
+
+// ── ADMIN: obtener actualizaciones de tareas ──────────────────────
+app.get('/task-updates', (req, res) => res.json(taskUpdates));
+
+// ── EMPLEADO: actualizar estado de un trabajo ─────────────────────
+app.post('/update-job-status', (req, res) => {
+  const { jobId, status, employeeId } = req.body;
+  const job = jobs.find(j => j.id === jobId);
+  if (job) {
+    job.status = status;
+    console.log(`🔄 Trabajo ${jobId} actualizado a: ${status} por empleado ${employeeId}`);
+  }
+  res.json({ ok: true });
+});
+
+// ── HEALTH CHECK ──────────────────────────────────────────────────
+app.get('/', (req, res) => res.json({
+  status: 'FieldWork GPS Server ✅',
+  empleados_activos: Object.values(locations).filter(l => l.status === 'active').length,
+  total_empleados: Object.keys(locations).length,
+  trabajos_sincronizados: jobs.length
+}));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 FieldWork Server corriendo en puerto ${PORT}`));
