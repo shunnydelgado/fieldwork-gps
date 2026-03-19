@@ -85,12 +85,16 @@ app.post('/sync-jobs', (req, res) => {
 app.get('/my-jobs/:employeeId', (req, res) => {
   const { employeeId } = req.params;
   const today = new Date().toISOString().split('T')[0];
-  const monthPrefix = today.slice(0, 7); // "2026-03"
+  const monthPrefix = today.slice(0, 7);
 
   const myJobs = jobs
-    .filter(j => String(j.employeeId) === String(employeeId) && j.date && j.date.startsWith(monthPrefix))
+    .filter(j => {
+      const matchById = String(j.employeeId) === String(employeeId);
+      const matchByEmpId = j.empId && String(j.empId) === String(employeeId);
+      const matchByMonth = j.date && j.date.startsWith(monthPrefix);
+      return (matchById || matchByEmpId) && matchByMonth;
+    })
     .map(job => {
-      // Aplicar actualizaciones de tareas del empleado
       const updates = taskUpdates[job.id] || {};
       const tasks = (job.tasks || []).map(task => ({
         ...task,
