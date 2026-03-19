@@ -162,6 +162,11 @@ app.post('/update-job-status', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── DEBUG: ver todos los trabajos ────────────────────────────────
+app.get('/all-jobs', (req, res) => res.json(jobs.map(j => ({
+  id: j.id, employeeId: j.employeeId, empId: j.empId, date: j.date, client: j.clientName
+}))));
+
 // ── HEALTH CHECK ──────────────────────────────────────────────────
 app.get('/', (req, res) => res.json({
   status: 'FieldWork GPS Server ✅',
@@ -172,3 +177,4 @@ app.get('/', (req, res) => res.json({
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 FieldWork Server corriendo en puerto ${PORT}`));
+
